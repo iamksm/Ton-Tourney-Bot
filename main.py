@@ -183,7 +183,6 @@ async def ping(ctx):
 
 
 @client.command()
-# @commands.has_any_role('🤠 JUMP MASTERS')
 async def register(ctx,
                    teamname,
                    jumpmaster,
@@ -197,9 +196,7 @@ async def register(ctx,
             if role.name == the_role:
                 mention = role.mention
                 embed = discord.Embed(title="🤔 Error",
-                              description=f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance",
-                              color=discord.Color.red())
-                # await ctx.send(f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance")
+                              description=f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance")
                 await ctx.send(embed=embed)
 
     else:
@@ -272,7 +269,6 @@ async def teams(ctx):
                               description="No Teams Have Registered at the moment",
                               color=discord.Color.red())
             await ctx.send(embed=embed)
-            # await ctx.send("No Teams Have Registered")
 
 
 @client.command()
@@ -285,7 +281,6 @@ async def newroster(ctx):
                               description="Team Roster has been Renewed",
                               color=discord.Color.red())
     await ctx.send(embed=embed)
-    # await ctx.send("Team Roster has been deleted")
 
 
 @client.command()
