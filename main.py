@@ -183,7 +183,7 @@ async def ping(ctx):
 
 
 @client.command()
-@commands.has_any_role('🤠 JUMP MASTERS')
+# @commands.has_any_role('🤠 JUMP MASTERS')
 async def register(ctx,
                    teamname,
                    jumpmaster,
@@ -191,67 +191,101 @@ async def register(ctx,
                    teammate_2,
                    teammate_3="None"):
 
-    if "_" in teamname:
-        teamname = teamname.replace("_", " ")
+    the_role = '🤠 JUMP MASTERS'
+    if the_role not in [role.name for role in ctx.author.roles]:
+        for role in ctx.guild.roles:
+            if role.name == the_role:
+                mention = role.mention
+                embed = discord.Embed(title="🤔 Error",
+                              description=f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance",
+                              color=discord.Color.red())
+                # await ctx.send(f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance")
+                await ctx.send(embed=embed)
 
-    elif "-" in teamname:
-        teamname = teamname.replace("-", " ")
+    else:
+        if "_" in teamname:
+            teamname = teamname.replace("_", " ")
 
-    team = {
-        teamname: {
-            "Team Leader": jumpmaster,
-            "Teammate 1": teammate_1,
-            "Teammate 2": teammate_2,
-            "Sub": teammate_3,
+        elif "-" in teamname:
+            teamname = teamname.replace("-", " ")
+
+        team = {
+            teamname: {
+                "Team Leader": jumpmaster,
+                "Teammate 1": teammate_1,
+                "Teammate 2": teammate_2,
+                "Sub": teammate_3,
+            }
         }
-    }
 
-    team_JSON = json.dumps(team)
+        team_JSON = json.dumps(team)
 
-    with open("roster.json", 'r+') as file:
-        try:
-            file_data = json.load(file)
-            team_data = json.loads(team_JSON)
-            file_data.update(team_data)
-            file.seek(0)
-            json.dump(file_data, file, indent=4)
-        except json.decoder.JSONDecodeError:
-            team_data = json.loads(team_JSON)
-            json.dump(team_data, file, indent=4)
+        with open("roster.json", 'r+') as file:
+            try:
+                file_data = json.load(file)
+                team_data = json.loads(team_JSON)
+                file_data.update(team_data)
+                file.seek(0)
+                json.dump(file_data, file, indent=4)
+            except json.decoder.JSONDecodeError:
+                team_data = json.loads(team_JSON)
+                json.dump(team_data, file, indent=4)
 
-    embed = discord.Embed(title="TOURNAMENT REGISTRATION",
-                          description=f"Team Name - {teamname}",
-                          color=discord.Color.red())
-    embed.set_thumbnail(url=ctx.author.avatar_url)
-    embed.add_field(name="Team Leader", value=jumpmaster, inline=False)
-    embed.add_field(name="Teammate 1", value=teammate_1, inline=False)
-    embed.add_field(name="Teammate 2", value=teammate_2, inline=False)
-    embed.add_field(name="Sub", value=teammate_3, inline=False)
-    await ctx.send(embed=embed)
+        embed = discord.Embed(title="TOURNAMENT REGISTRATION",
+                              description=f"Team Name - {teamname}",
+                              color=discord.Color.red())
+        embed.set_thumbnail(url=ctx.author.avatar_url)
+        embed.add_field(name="Team Leader", value=jumpmaster, inline=False)
+        embed.add_field(name="Teammate 1", value=teammate_1, inline=False)
+        embed.add_field(name="Teammate 2", value=teammate_2, inline=False)
+        embed.add_field(name="Sub", value=teammate_3, inline=False)
+        await ctx.send(embed=embed)
 
 
 @client.command()
+@commands.has_any_role('🔱 ORGANIZERS')
 async def teams(ctx):
     with open("roster.json", 'r+') as file:
-        roster = json.load(file)
-        embed = discord.Embed(title="TOURNAMENT ROSTER",
-                              description="These are the Registered Teams",
+        try:
+            roster = json.load(file)
+            embed = discord.Embed(title="TOURNAMENT ROSTER",
+                                  description="These are the Registered Teams",
+                                  color=discord.Color.red())
+            count = 1
+            for team in roster:
+                print(f"\nTeam Name - {team}")
+                teams = roster[team]
+                team_details = []
+                for title in teams:
+                    print(f"{title} - {teams[title]}")
+                    detail = f"{title} - {teams[title]}"
+                    team_details.append(detail)
+                embed.add_field(name=f"{count}: {team}",
+                                value='\n'.join(team_details),
+                                inline=True)
+                count = count + 1
+            embed.set_footer(text="Bot by iamksm")
+            await ctx.send(embed=embed)
+
+        except json.decoder.JSONDecodeError:
+            embed = discord.Embed(title="😭 Error",
+                              description="No Teams Have Registered at the moment",
                               color=discord.Color.red())
-        count = 1
-        for team in roster:
-            print(f"\nTeam Name - {team}")
-            teams = roster[team]
-            team_details = []
-            for title in teams:
-                print(f"{title} - {teams[title]}")
-                detail = f"{title} - {teams[title]}"
-                team_details.append(detail)
-            embed.add_field(name=f"{count}: {team}",
-                            value='\n'.join(team_details),
-                            inline=True)
-            count = count + 1
-    embed.set_footer(text="Bot by iamksm")
+            await ctx.send(embed=embed)
+            # await ctx.send("No Teams Have Registered")
+
+
+@client.command()
+@commands.has_any_role('🔱 ORGANIZERS')
+async def newroster(ctx):
+    with open("roster.json", 'r+') as file:
+        file.seek(0)
+        file.truncate()
+    embed = discord.Embed(title="🥳 Successfully Deleted Data",
+                              description="Team Roster has been Renewed",
+                              color=discord.Color.red())
     await ctx.send(embed=embed)
+    # await ctx.send("Team Roster has been deleted")
 
 
 @client.command()
