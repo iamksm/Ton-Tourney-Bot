@@ -195,8 +195,11 @@ async def register(ctx,
         for role in ctx.guild.roles:
             if role.name == the_role:
                 mention = role.mention
-                embed = discord.Embed(title="🤔 Error",
-                              description=f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance")
+                embed = discord.Embed(
+                    title="🤔 Error",
+                    description=
+                    f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance"
+                )
                 await ctx.send(embed=embed)
 
     else:
@@ -265,9 +268,10 @@ async def teams(ctx):
             await ctx.send(embed=embed)
 
         except json.decoder.JSONDecodeError:
-            embed = discord.Embed(title="😭 Error",
-                              description="No Teams Have Registered at the moment",
-                              color=discord.Color.red())
+            embed = discord.Embed(
+                title="😭 Error",
+                description="No Teams Have Registered at the moment",
+                color=discord.Color.red())
             await ctx.send(embed=embed)
 
 
@@ -278,9 +282,52 @@ async def newroster(ctx):
         file.seek(0)
         file.truncate()
     embed = discord.Embed(title="🥳 Successfully Deleted Data",
-                              description="Team Roster has been Renewed",
-                              color=discord.Color.red())
+                          description="Team Roster has been Renewed",
+                          color=discord.Color.red())
     await ctx.send(embed=embed)
+
+
+@client.command()
+@commands.has_any_role('🔱 ORGANIZERS')
+async def generate(ctx):
+    with open("roster.json", 'r+') as file:
+        try:
+            registered_teams = json.load(file)
+            team_names = []
+            roles = []
+            player_names = []
+            for team in registered_teams:
+                for role in registered_teams[team]:
+                    team_names.append(team)
+                    roles.append(role)
+                    player = registered_teams[team][role]
+                    player_names.append(player)
+            roster = pandas.DataFrame.from_dict({
+                "Team Name": team_names,
+                "Role": roles,
+                "Player Name": player_names,
+            })
+            writer = pandas.ExcelWriter('Tournament-Roster.xlsx')
+            roster.to_excel(writer,
+                            index=False,
+                            sheet_name='sheet1',
+                            na_rep='NaN')
+            for column in roster:
+                column_width = max(roster[column].astype(str).map(len).max(),
+                                   len(column))
+                col_idx = roster.columns.get_loc(column)
+                writer.sheets['sheet1'].set_column(col_idx, col_idx,
+                                                   column_width)
+            writer.save()
+            await ctx.send(file=discord.File(writer))
+            os.remove(writer)
+
+        except json.decoder.JSONDecodeError:
+            embed = discord.Embed(
+                title="😭 Error",
+                description="No Teams Have Registered at the moment",
+                color=discord.Color.red())
+            await ctx.send(embed=embed)
 
 
 @client.command()
