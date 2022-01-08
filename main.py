@@ -1,14 +1,16 @@
 import asyncio
-import discord
+import datetime
 import json
 import os
+import platform
+import random
+
+import discord
 import pandas
 import pytz
-import random
 import requests
-
-from datetime import datetime
 from discord.ext import commands
+
 from keep_alive import keep_alive
 
 intents = discord.Intents.all()
@@ -25,22 +27,6 @@ def local_datetime(datetime_obj):
     utcdatetime = datetime_obj.replace(tzinfo=pytz.utc)
     tz = "Africa/Nairobi"
     return utcdatetime.astimezone(pytz.timezone(tz))
-
-
-@client.event
-async def on_ready():
-    print("Bot's Ready")
-    while True:
-        guildCount = len(client.guilds)
-        memberCount = len(list(client.get_all_members()))
-        randomGame = random.choice(__games__)
-        await client.change_presence(
-            activity=discord.Activity(
-                type=randomGame[0],
-                name=randomGame[1].format(guilds=guildCount, members=memberCount),
-            )
-        )
-        await asyncio.sleep(__gamesTimer__)
 
 
 __games__ = [
@@ -62,9 +48,25 @@ __games__ = [
 __gamesTimer__ = 60 * 60  # 60 minutes
 
 
+@client.event
+async def on_ready():
+    print("Bot's Ready")
+    while True:
+        guildCount = len(client.guilds)
+        memberCount = len(list(client.get_all_members()))
+        randomGame = random.choice(__games__)
+        await client.change_presence(
+            activity=discord.Activity(
+                type=randomGame[0],
+                name=randomGame[1].format(guilds=guildCount, members=memberCount),
+            )
+        )
+        await asyncio.sleep(__gamesTimer__)
+
+
 def prepare_match_details(match):
     player_results = match["player_results"]
-    time_started = datetime.fromtimestamp(match["match_start"])
+    time_started = datetime.datetime.fromtimestamp(match["match_start"])
     time_started = local_datetime(time_started)
     positions = []
     team_names = []
@@ -185,7 +187,7 @@ async def ping(ctx):
     delta = pong.created_at - ping.created_at
     delta = int(delta.total_seconds() * 1000)
     await pong.edit(
-        content=f":ping_pong: Pong! ({delta} ms)\n*Discord WebSocket latency: {round(client.latency, 5)} ms*"
+        content=f":ping_pong: Pong! ({delta} ms)\n*Discord WebSocket latency: {round(client.latency, 5)} ms*"  # noqa
     )
 
 
@@ -201,7 +203,7 @@ async def register(
                 mention = role.mention
                 embed = discord.Embed(
                     title="🤔 Error",
-                    description=f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance",
+                    description=f"Only Members with {str(mention)} Role Can register Teams. Contact Admin for Assistance",  # noqa
                 )
                 await ctx.send(embed=embed)
 
@@ -518,6 +520,73 @@ async def whois(ctx, member: discord.Member):
     embed.set_footer(
         icon_url=ctx.author.avatar_url, text=f"Requested by {ctx.author.name}"
     )
+
+    await ctx.send(embed=embed)
+
+
+def get_uptime(days, hours, minutes, seconds):
+    uptime = "None"
+    seconds = int(seconds)
+    minutes = int(minutes)
+    hours = int(hours)
+    days = int(days)
+
+    min_stat = "Minutes" if int(minutes) > 1 else "Minute"
+    sec_stat = "Seconds" if seconds > 1 else "Second"
+    hour_stat = "Hours" if hours > 1 else "Hour"
+    day_stat = "Days" if days > 1 else "Day"
+
+    if seconds > 0:
+        uptime = f"{seconds} {sec_stat}"
+
+    if minutes > 0:
+        uptime = f"{minutes} {min_stat} and {seconds} {sec_stat}"
+
+    if hours > 0:
+        uptime = f"{hours} {hour_stat}, {minutes} {min_stat} and {seconds} {sec_stat}"
+
+    if days > 0:
+        uptime = f"{days} {day_stat}, {hours} {hour_stat}, {minutes} {min_stat} and {seconds} {sec_stat}"  # noqa
+
+    return uptime
+
+
+@client.command()
+async def stats(ctx):
+    """
+    A useful command that displays bot statistics.
+    """
+    starttime = datetime.datetime.now()
+    pythonVersion = platform.python_version()
+    dpyVersion = discord.__version__
+    serverCount = len(client.guilds)
+    memberCount = len(set(client.get_all_members()))
+
+    time = datetime.datetime.now() - starttime
+    days = ((time.seconds / 3600) / 24) % 24
+    hours = time.seconds / 3600
+    minutes = (time.seconds / 60) % 60
+    seconds = time.seconds % 60
+
+    uptime = get_uptime(days, hours, minutes, seconds)
+
+    embed = discord.Embed(
+        title=f"{client.user.name} Stats",
+        description="",
+        colour=ctx.author.colour,
+        timestamp=ctx.message.created_at,
+    )
+
+    embed.add_field(name="Bot Version:", value="0.0.10")
+    embed.add_field(name="Python Version:", value=pythonVersion)
+    embed.add_field(name="Discord.Py Version", value=dpyVersion)
+    embed.add_field(name="Total Guilds:", value=serverCount)
+    embed.add_field(name="Total Users:", value=memberCount)
+    embed.add_field(name="Uptime", value=uptime)
+    embed.add_field(name="Bot Developer:", value="<@459338191892250625>")
+
+    embed.set_footer(text=f"Say hello to my little friend | {client.user.name}")
+    embed.set_author(name=client.user.name, icon_url=client.user.avatar_url)
 
     await ctx.send(embed=embed)
 

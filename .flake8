@@ -1,0 +1,6 @@
+[flake8]
+max-complexity = 10
+exclude = env, bin, venv, build, .tox, .cache, .git, docs, {{cookiecutter.host_name}}/
+max_line_length = 100
+extend-ignore = E722, C901, W605, F841, W505
+max-doc-length = 80
