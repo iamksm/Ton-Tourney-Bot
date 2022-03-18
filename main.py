@@ -1,14 +1,17 @@
 import asyncio
-import discord
 import json
 import os
+import platform
+import random
+from datetime import datetime
+
+import discord
 import pandas
 import pytz
-import random
 import requests
-
-from datetime import datetime
 from discord.ext import commands
+from replit import db as registered
+
 from keep_alive import keep_alive
 
 intents = discord.Intents.all()
@@ -20,11 +23,34 @@ intents.reactions = True
 client = commands.Bot(command_prefix="#", intents=intents)
 APEX_ENDPOINT = "https://r5-crossplay.r5prod.stryder.respawn.com/privatematch/?token={}"
 
+# Role IDs
+ORGANIZERS = 819527735478321152
+PARTNERS = 855159806808555590
+CASTERS = 820221405261594625
+
 
 def local_datetime(datetime_obj):
     utcdatetime = datetime_obj.replace(tzinfo=pytz.utc)
     tz = "Africa/Nairobi"
     return utcdatetime.astimezone(pytz.timezone(tz))
+
+
+__games__ = [
+    (discord.ActivityType.playing, "with iamksm"),
+    (discord.ActivityType.playing, "on World's Edge"),
+    (discord.ActivityType.playing, "Ranked"),
+    (discord.ActivityType.playing, "on King's Canyon"),
+    (discord.ActivityType.playing, "on Olympus"),
+    (discord.ActivityType.playing, "Arenas"),
+    (discord.ActivityType.playing, "Duos"),
+    (discord.ActivityType.playing, "Trios"),
+    (discord.ActivityType.playing, "on 300 Ping 😭"),
+    (discord.ActivityType.playing, "in Skull Town"),
+    (discord.ActivityType.playing, "in Storm Point"),
+    (discord.ActivityType.watching, "over {members} Members"),
+    (discord.ActivityType.watching, "the NoticeBoard"),
+]
+__gamesTimer__ = 60 * 60  # 60 minutes
 
 
 @client.event
@@ -41,25 +67,6 @@ async def on_ready():
             )
         )
         await asyncio.sleep(__gamesTimer__)
-
-
-__games__ = [
-    (discord.ActivityType.playing, "with iamksm"),
-    (discord.ActivityType.playing, "on World's Edge"),
-    (discord.ActivityType.playing, "Ranked"),
-    (discord.ActivityType.playing, "on King's Canyon"),
-    (discord.ActivityType.playing, "on Olympus"),
-    (discord.ActivityType.playing, "Arenas"),
-    (discord.ActivityType.playing, "Duos"),
-    (discord.ActivityType.playing, "Trios"),
-    (discord.ActivityType.playing, "on 300 Ping 😭"),
-    (discord.ActivityType.playing, "on World's Edge"),
-    (discord.ActivityType.playing, "Ranked"),
-    (discord.ActivityType.watching, "over {guilds} Server"),
-    (discord.ActivityType.watching, "over {members} Members"),
-    (discord.ActivityType.watching, "the NoticeBoard"),
-]
-__gamesTimer__ = 60 * 60  # 60 minutes
 
 
 def prepare_match_details(match):
@@ -103,7 +110,7 @@ async def on_message(message):
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
 async def results(ctx, token, match_no=None):
     """Command to generate results pulled from Apex API"""
     # only admins can run this
@@ -136,7 +143,7 @@ async def results(ctx, token, match_no=None):
 
 
 # @client.event
-# # @commands.has_any_role('🔱 ORGANIZERS')
+# # @commands.has_any_role(ORGANIZERS)
 # async def on_message(message):
 """
 A Functionality to enable the bot to reflect the message you send to it
@@ -146,8 +153,9 @@ to the discord channel of your choosing
 #     message_channel = discord.utils.get(client.get_all_channels(),
 #                                         name="😃-welcome")
 
-#     if message.author == client.user:
-#         return
+# bot = discord.ClientUser.bot
+# if message.author is bot:
+#     return
 
 #     if str(message.channel.type) == "private":
 #         if message.attachments != empty_array:
@@ -178,6 +186,7 @@ async def clear(ctx, amount=10):
 
 
 @client.command()
+@commands.has_permissions(administrator=True)
 async def ping(ctx):
     """Measure the Response Time"""
     ping = ctx.message
@@ -189,9 +198,33 @@ async def ping(ctx):
     )
 
 
+def check_if_member_is_creating_or_updating(username):
+    if username in registered.keys():
+        return True
+    else:
+        # Add the name to the db
+        return False
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def remove_team(ctx, teamname):
+    teamname = teamname.replace("_", " ").replace("-", " ")
+    with open("roster.json", "r+", encoding="utf8") as file:
+        try:
+            file_data = json.load(file)
+            file_data.pop(teamname)
+            file.seek(0)
+            file.truncate()
+            json.dump(file_data, file, indent=4)
+            await ctx.send(f"**{teamname}** has been cleared from the roster")
+        except Exception as e:
+            await ctx.send(f"Error in removing your team {e}")
+
+
 @client.command()
 async def register(
-    ctx, teamname, jumpmaster, teammate_1, teammate_2, teammate_3="None"
+    ctx, teamname, jumpmaster, teammate_1="None", teammate_2="None", teammate_3="None"
 ):
     """Command used to register teams"""
     the_role = "🤠 JUMP MASTERS"
@@ -206,33 +239,58 @@ async def register(
                 await ctx.send(embed=embed)
 
     else:
-        if "_" in teamname:
-            teamname = teamname.replace("_", " ")
-
-        elif "-" in teamname:
-            teamname = teamname.replace("-", " ")
-
-        team = {
-            teamname: {
-                "Team Leader": jumpmaster,
-                "Teammate 1": teammate_1,
-                "Teammate 2": teammate_2,
-                "Sub": teammate_3,
+        is_registered = check_if_member_is_creating_or_updating(ctx.author.name)
+        if not is_registered:
+          teamname = teamname.replace("_", " ").replace("-", " ")
+          registered[ctx.author.name] = teamname
+          team = {
+              teamname: {
+                  "Team Leader": jumpmaster,
+                  "Teammate 1": teammate_1,
+                  "Teammate 2": teammate_2,
+                  "Sub": teammate_3,
+              }
+          }
+  
+          team_JSON = json.dumps(team)
+  
+          with open("roster.json", "r+") as file:
+              try:
+                  file_data = json.load(file)
+                  team_data = json.loads(team_JSON)
+                  file_data.update(team_data)
+                  file.seek(0)
+                  json.dump(file_data, file, indent=4)
+              except json.decoder.JSONDecodeError:
+                  team_data = json.loads(team_JSON)
+                  json.dump(team_data, file, indent=4)
+        else:
+            team_to_remove = registered.get(ctx.author.name)
+            teamname = teamname.replace("_", " ").replace("-", " ")
+            registered[ctx.author.name] = teamname
+            team = {
+                teamname: {
+                    "Team Leader": jumpmaster,
+                    "Teammate 1": teammate_1,
+                    "Teammate 2": teammate_2,
+                    "Sub": teammate_3,
+                }
             }
-        }
+            team_JSON = json.dumps(team)
+            with open("roster.json", "r+") as file:
+                try:
+                    file_data = json.load(file)
+                    team_data = json.loads(team_JSON)
 
-        team_JSON = json.dumps(team)
+                    if team_to_remove:
+                      del file_data[team_to_remove]
 
-        with open("roster.json", "r+") as file:
-            try:
-                file_data = json.load(file)
-                team_data = json.loads(team_JSON)
-                file_data.update(team_data)
-                file.seek(0)
-                json.dump(file_data, file, indent=4)
-            except json.decoder.JSONDecodeError:
-                team_data = json.loads(team_JSON)
-                json.dump(team_data, file, indent=4)
+                    file_data.update(team_data)
+                    file.seek(0)
+                    json.dump(file_data, file, indent=4)
+                except json.decoder.JSONDecodeError:
+                    team_data = json.loads(team_JSON)
+                    json.dump(team_data, file, indent=4)
 
         embed = discord.Embed(
             title="TOURNAMENT REGISTRATION",
@@ -248,7 +306,46 @@ async def register(
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
+async def add_team(ctx, teamname, jumpmaster, teammate_1="None", teammate_2="None", teammate_3="None"):
+    teamname = teamname.replace("_", " ").replace("-", " ")
+    team = {
+        teamname: {
+            "Team Leader": jumpmaster,
+            "Teammate 1": teammate_1,
+            "Teammate 2": teammate_2,
+            "Sub": teammate_3,
+        }
+    }
+  
+    team_JSON = json.dumps(team)
+  
+    with open("roster.json", "r+") as file:
+        try:
+            file_data = json.load(file)
+            team_data = json.loads(team_JSON)
+            file_data.update(team_data)
+            file.seek(0)
+            json.dump(file_data, file, indent=4)
+        except json.decoder.JSONDecodeError:
+            team_data = json.loads(team_JSON)
+            json.dump(team_data, file, indent=4)
+
+    embed = discord.Embed(
+        title="TOURNAMENT REGISTRATION",
+        description=f"Team Name - {teamname}",
+        color=discord.Color.red(),
+    )
+    embed.set_thumbnail(url=ctx.author.avatar_url)
+    embed.add_field(name="Team Leader", value=jumpmaster, inline=False)
+    embed.add_field(name="Teammate 1", value=teammate_1, inline=False)
+    embed.add_field(name="Teammate 2", value=teammate_2, inline=False)
+    embed.add_field(name="Sub", value=teammate_3, inline=False)
+    await ctx.send(embed=embed)
+
+  
+@client.command()
+@commands.has_any_role(ORGANIZERS, PARTNERS, CASTERS)
 async def teams(ctx):
     """Command used to display currently registered teams"""
     with open("roster.json", "r+") as file:
@@ -285,9 +382,12 @@ async def teams(ctx):
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
 async def renew(ctx):
     """Command used to renew the team roster"""
+    for key in registered.keys():
+        del registered[key]
+
     with open("roster.json", "r+") as file:
         file.seek(0)
         file.truncate()
@@ -300,7 +400,7 @@ async def renew(ctx):
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
 async def generate(ctx):
     """Used to generate and excel of registered teams"""
     with open("roster.json", "r+") as file:
@@ -518,6 +618,73 @@ async def whois(ctx, member: discord.Member):
     embed.set_footer(
         icon_url=ctx.author.avatar_url, text=f"Requested by {ctx.author.name}"
     )
+
+    await ctx.send(embed=embed)
+
+
+def get_uptime(days, hours, minutes, seconds):
+    uptime = "None"
+    seconds = int(seconds)
+    minutes = int(minutes)
+    hours = int(hours)
+    days = int(days)
+
+    min_stat = "Minutes" if int(minutes) > 1 else "Minute"
+    sec_stat = "Seconds" if seconds > 1 else "Second"
+    hour_stat = "Hours" if hours > 1 else "Hour"
+    day_stat = "Days" if days > 1 else "Day"
+
+    if seconds > 0:
+        uptime = f"{seconds} {sec_stat}"
+
+    if minutes > 0:
+        uptime = f"{minutes} {min_stat} and {seconds} {sec_stat}"
+
+    if hours > 0:
+        uptime = f"{hours} {hour_stat}, {minutes} {min_stat} and {seconds} {sec_stat}"
+
+    if days > 0:
+        uptime = f"{days} {day_stat}, {hours} {hour_stat}, {minutes} {min_stat} and {seconds} {sec_stat}"  # noqa
+
+    return uptime
+
+
+@client.command()
+async def stats(ctx):
+    """
+    A useful command that displays bot statistics.
+    """
+    starttime = datetime.now()
+    pythonVersion = platform.python_version()
+    dpyVersion = discord.__version__
+    serverCount = len(client.guilds)
+    memberCount = len(set(client.get_all_members()))
+
+    _time = datetime.now() - starttime
+    days = ((_time.seconds / 3600) / 24) % 24
+    hours = _time.seconds / 3600
+    minutes = (_time.seconds / 60) % 60
+    seconds = _time.seconds % 60
+
+    uptime = get_uptime(days, hours, minutes, seconds)
+
+    embed = discord.Embed(
+        title=f"{client.user.name} Stats",
+        description="",
+        colour=ctx.author.colour,
+        timestamp=ctx.message.created_at,
+    )
+
+    embed.add_field(name="Bot Version:", value="0.0.10")
+    embed.add_field(name="Python Version:", value=pythonVersion)
+    embed.add_field(name="Discord.Py Version", value=dpyVersion)
+    embed.add_field(name="Total Guilds:", value=serverCount)
+    embed.add_field(name="Total Users:", value=memberCount)
+    embed.add_field(name="Uptime", value=uptime)
+    embed.add_field(name="Bot Developer:", value="<@459338191892250625>")
+
+    embed.set_footer(text=f"Say hello to my little friend | {client.user.name}")
+    embed.set_author(name=client.user.name, icon_url=client.user.avatar_url)
 
     await ctx.send(embed=embed)
 
