@@ -1,17 +1,19 @@
 import asyncio
-import datetime
 import json
 import os
 import platform
 import random
+from datetime import datetime
 
 import discord
 import pandas
 import pytz
 import requests
 from discord.ext import commands
+from replit import db
 
 from keep_alive import keep_alive
+from leaderboard_processing import _add_token, _show_tokens
 
 intents = discord.Intents.all()
 intents.members = True
@@ -21,6 +23,13 @@ intents.reactions = True
 
 client = commands.Bot(command_prefix="#", intents=intents)
 APEX_ENDPOINT = "https://r5-crossplay.r5prod.stryder.respawn.com/privatematch/?token={}"
+
+# Role IDs
+ORGANIZERS = 819527735478321152
+PARTNERS = 855159806808555590
+CASTERS = 820221405261594625
+JUMPMASTER_ROLE_ID = 819527931327807489
+leaderboard = {}
 
 
 def local_datetime(datetime_obj):
@@ -39,9 +48,8 @@ __games__ = [
     (discord.ActivityType.playing, "Duos"),
     (discord.ActivityType.playing, "Trios"),
     (discord.ActivityType.playing, "on 300 Ping 😭"),
-    (discord.ActivityType.playing, "on World's Edge"),
-    (discord.ActivityType.playing, "Ranked"),
-    (discord.ActivityType.watching, "over {guilds} Server"),
+    (discord.ActivityType.playing, "in Skull Town"),
+    (discord.ActivityType.playing, "in Storm Point"),
     (discord.ActivityType.watching, "over {members} Members"),
     (discord.ActivityType.watching, "the NoticeBoard"),
 ]
@@ -51,6 +59,15 @@ __gamesTimer__ = 60 * 60  # 60 minutes
 @client.event
 async def on_ready():
     print("Bot's Ready")
+    if not db.get("tokens"):
+        db["tokens"] = {}
+
+    if not db.get("players"):
+        db["players"] = {}
+
+    if not db.get("match_ids"):
+        db["match_ids"] = []
+
     while True:
         guildCount = len(client.guilds)
         memberCount = len(list(client.get_all_members()))
@@ -64,9 +81,50 @@ async def on_ready():
         await asyncio.sleep(__gamesTimer__)
 
 
+def populate_kills_leaderboard(match):
+    player_results = match["player_results"]
+
+    for player in player_results:
+        player_name = player["playerName"]
+        try:
+            leaderboard[player_name] += player["kills"]
+        except KeyError:
+            leaderboard[player_name] = player["kills"]
+
+    return leaderboard
+
+
+def prepare_player_match_kill_details(match):
+    player_results = match["player_results"]
+    time_started = datetime.fromtimestamp(match["match_start"])
+    time_started = local_datetime(time_started)
+    positions = []
+    player_names = []
+    player_kills = []
+    player_assists = []
+    player_damage = []
+    for player in player_results:
+        positions.append(player["teamPlacement"])
+        player_names.append(player["playerName"])
+        player_kills.append(player["kills"])
+        player_assists.append(player["assists"])
+        player_damage.append(player["damageDealt"])
+
+    df = pandas.DataFrame.from_dict(
+        {
+            "Team Position": positions,
+            "Player Name": player_names,
+            "Player Kills": player_kills,
+            "Player Assists": player_assists,
+            "Player Damage": player_damage,
+        }
+    )
+    return df, time_started
+
+
 def prepare_match_details(match):
     player_results = match["player_results"]
-    time_started = datetime.datetime.fromtimestamp(match["match_start"])
+    time_started = datetime.fromtimestamp(match["match_start"])
     time_started = local_datetime(time_started)
     positions = []
     team_names = []
@@ -105,7 +163,7 @@ async def on_message(message):
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
 async def results(ctx, token, match_no=None):
     """Command to generate results pulled from Apex API"""
     # only admins can run this
@@ -137,8 +195,285 @@ async def results(ctx, token, match_no=None):
         match_count += 1
 
 
+@client.command()
+@commands.has_permissions(manage_messages=True)
+async def eleaderboard(ctx):
+    """To be used by casters to generate excel"""
+    with open("leaderboard.json", "r", encoding="utf-8") as file:
+        try:
+            data = json.load(file)
+            data = dict(sorted(data.items(), key=lambda x: x[1], reverse=True))
+            df = pandas.DataFrame.from_dict(
+                {"Names": data.keys(), "Kills": data.values()}
+            )
+        except Exception as e:
+            await ctx.send(f"Error: {e}")
+            return
+
+    today = local_datetime(datetime.today())
+    today = today.strftime("%d-%m-%Y %H:%M:%S")
+    file_name = f"/tmp/leaderboard-{today}.xlsx"
+    writer = pandas.ExcelWriter(file_name)
+
+    df.sort_values("Kills", ascending=False, inplace=True)
+    print(df)
+    df.to_excel(writer, index=False, sheet_name="Sheet1")
+
+    # Auto resize columns
+    for column in df:
+        column_length = max(df[column].astype(str).map(len).max(), len(column))
+        col_idx = df.columns.get_loc(column)
+        writer.sheets["Sheet1"].set_column(col_idx, col_idx, column_length)
+    writer.save()
+
+    await ctx.send(file=discord.File(file_name))
+    os.remove(file_name)
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def add_token(ctx, token):
+    """On the start of a new season, ensure you add tokens to be used one by one"""
+    await ctx.send(_add_token(token, db["tokens"]))
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def clear_tokens(ctx):
+    """Clears all stored tokens"""
+    db["tokens"] = {}
+    await ctx.send("Tokens successfully cleared")
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def list_tokens(ctx):
+    """Shows all registered tokens"""
+    await ctx.send(_show_tokens(db["tokens"]))
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def clear_match_ids(ctx):
+    """Clear Match IDs, BE CAREFULL WITH THIS COMMAND!"""
+    if db["match_ids"].value:
+        db["match_ids"] = []
+        await ctx.send("Match IDs cleared")
+    else:
+        await ctx.send("No match id recorded")
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def match_ids(ctx):
+    """Shows processed matches (For dev puposes)"""
+    if db["match_ids"].value:
+        await ctx.send(db["match_ids"].value)
+    else:
+        await ctx.send("No match id recorded")
+
+
+def process_bulk_results(embed, matches_across_tokens):
+    global leaderboard
+    the_leaderboard = {}
+    for matches in matches_across_tokens:
+        for match in matches:
+            if match["match_start"] not in db["match_ids"].value:
+                populate_kills_leaderboard(match)
+                db["match_ids"].append(match["match_start"])
+
+    leaders = dict(sorted(leaderboard.items(), key=lambda x: x[1], reverse=True))
+    for position, player in enumerate(leaders, start=1):
+        the_leaderboard[player] = leaders[player]
+
+    kills_JSON = json.dumps(the_leaderboard)
+    with open("leaderboard.json", "r+", encoding="utf8") as file:
+        try:
+            file_data = json.load(file)
+            team_data = json.loads(kills_JSON)
+            file_data.update(team_data)
+            leaders = dict(sorted(file_data.items(), key=lambda x: x[1], reverse=True))
+            for position, player in enumerate(leaders, start=1):
+                the_leaderboard[player] = leaders[player]
+                embed.add_field(
+                    name=f"{position}. {player}",
+                    value=f"Total Kils - {leaders[player]}",
+                    inline=True,
+                )
+            file.seek(0)
+            json.dump(file_data, file, indent=4)
+        except json.decoder.JSONDecodeError:
+            team_data = json.loads(kills_JSON)
+            leaders = dict(sorted(team_data.items(), key=lambda x: x[1], reverse=True))
+            for position, player in enumerate(leaders, start=1):
+                the_leaderboard[player] = leaders[player]
+                embed.add_field(
+                    name=f"{position}. {player}",
+                    value=f"Total Kils - {leaders[player]}",
+                    inline=True,
+                )
+            json.dump(team_data, file, indent=4)
+
+
+@client.command()
+async def standings(ctx):
+    """Shows current leaderboard standings"""
+    today = local_datetime(datetime.today())
+    today = today.strftime("%d/%m/%Y, %H:%M:%S")
+    embed = discord.Embed(
+        title="**THE SKULLS PIT LEAGUE**",
+        description=f"Kills leaderboard as at {today}",
+        color=discord.Color.red(),
+    )
+    embed.set_thumbnail(url=str(ctx.guild.icon_url))
+    with open("leaderboard.json", "r+", encoding="utf8") as file:
+        try:
+            file_data = json.load(file)
+            leaders = dict(sorted(file_data.items(), key=lambda x: x[1], reverse=True))
+            for position, player in enumerate(leaders, start=1):
+                embed.add_field(
+                    name=f"{position}. {player}",
+                    value=f"Total Kils - {leaders[player]}",
+                    inline=True,
+                )
+            file.seek(0)
+            json.dump(file_data, file, indent=4)
+        except Exception as e:
+            await ctx.send(f"Error: {e}")
+            return
+    await ctx.send(embed=embed)
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def token_kills(ctx, token=None):
+    """Get leaderboard standings per token, can be used to get monthly results"""
+    # only admins can run this
+    # Show kills from matches in the specified token
+    if not token:
+        await ctx.send("Use #token_kills token")
+        return
+
+    response = requests.get(APEX_ENDPOINT.format(token))
+    if response.status_code != requests.codes.ok:
+        return
+    matches = response.json().get("matches")
+    if not matches:
+        return
+    matches.reverse()
+    today = local_datetime(datetime.today())
+    today = today.strftime("%d/%m/%Y, %H:%M:%S")
+    embed = discord.Embed(
+        title="**THE SKULLS PIT LEAGUE**",
+        description=f"Kills leaderboard as at {today}",
+        color=discord.Color.red(),
+    )
+    embed.set_thumbnail(url=str(ctx.guild.icon_url))
+
+    global leaderboard
+    leaderboard = {}
+    for match in matches:
+        leaderboard.update(populate_kills_leaderboard(match))
+
+    leaders = dict(sorted(leaderboard.items(), key=lambda x: x[1], reverse=True))
+    for position, player in enumerate(leaders, start=1):
+        embed.add_field(
+            name=f"{position}. {player}",
+            value=f"Total Kils - {leaders[player]}",
+            inline=True,
+        )
+    leaderboard = {}
+    await ctx.send(embed=embed)
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def reset_leaderboard(ctx):
+    """Used by admins to manually add a team to the roster"""
+    with open("leaderboard.json", "r+", encoding="utf8") as file:
+        try:
+            file.truncate()
+            global leaderboard
+            global the_leaderboard
+            leaderboard = {}
+            the_leaderboard = {}
+            db["match_ids"] = []
+            await ctx.send("**Leaderboard and Match IDs** have been cleared")
+        except Exception as e:
+            await ctx.send(f"Error in clearing: {e}")
+
+
+def update_leaderboard_json(matches):
+    global leaderboard
+    leaderboard = {}
+    for match in matches:
+        populate_kills_leaderboard(match)
+
+    leaders = dict(sorted(leaderboard.items(), key=lambda x: x[1], reverse=True))
+    for position, player in enumerate(leaders, start=1):
+        the_leaderboard[player] = leaders[player]
+
+    kills_JSON = json.dumps(the_leaderboard)
+    with open("leaderboard.json", "r+", encoding="utf8") as file:
+        try:
+            file_data = json.load(file)
+            team_data = json.loads(kills_JSON)
+            file_data.update(team_data)
+            file.seek(0)
+            json.dump(file_data, file, indent=4)
+        except json.decoder.JSONDecodeError:
+            team_data = json.loads(kills_JSON)
+            json.dump(team_data, file, indent=4)
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def update_leaderboard(ctx, token=None):
+    """Used by admins to manually add a team to the roster"""
+    if not token:
+        if db["tokens"]:
+            matches_across_tokens = []
+            for token in db["tokens"]:
+                response = requests.get(APEX_ENDPOINT.format(token))
+                if response.status_code != requests.codes.ok:
+                    continue
+                if matches := response.json().get("matches"):
+                    matches_across_tokens.append(matches)
+
+            today = local_datetime(datetime.today())
+            today = today.strftime("%d/%m/%Y, %H:%M:%S")
+            embed = discord.Embed(
+                title="**THE SKULLS PIT LEAGUE**",
+                description=f"Kills leaderboard as at {today}",
+                color=discord.Color.red(),
+            )
+            embed.set_thumbnail(url=str(ctx.guild.icon_url))
+            process_bulk_results(embed, matches_across_tokens)
+            await ctx.send(embed=embed)
+            return
+        return
+
+    response = requests.get(APEX_ENDPOINT.format(token))
+    if response.status_code != requests.codes.ok:
+        return
+    matches = response.json().get("matches")
+    if not matches:
+        return
+    matches.reverse()
+    today = local_datetime(datetime.today())
+    today = today.strftime("%d/%m/%Y, %H:%M:%S")
+    embed = discord.Embed(
+        title="**THE SKULLS PIT LEAGUE**",
+        description=f"Kills leaderboard as at {today}",
+        color=discord.Color.red(),
+    )
+    embed.set_thumbnail(url=str(ctx.guild.icon_url))
+    update_leaderboard_json(matches)
+    await ctx.send("**Leaderboard** has been updated")
+
+
 # @client.event
-# # @commands.has_any_role('🔱 ORGANIZERS')
+# # @commands.has_any_role(ORGANIZERS)
 # async def on_message(message):
 """
 A Functionality to enable the bot to reflect the message you send to it
@@ -148,8 +483,9 @@ to the discord channel of your choosing
 #     message_channel = discord.utils.get(client.get_all_channels(),
 #                                         name="😃-welcome")
 
-#     if message.author == client.user:
-#         return
+# bot = discord.ClientUser.bot
+# if message.author is bot:
+#     return
 
 #     if str(message.channel.type) == "private":
 #         if message.attachments != empty_array:
@@ -173,6 +509,17 @@ async def on_member_join(member):
 
 
 @client.command()
+@commands.has_permissions(administrator=True)
+async def remove_role(ctx):
+    """Command to remove Jumpmaster role from everyone after a Tournament"""
+    JUMPMASTER_ROLE = discord.utils.get(ctx.guild.roles, id=JUMPMASTER_ROLE_ID)
+    members = ctx.guild.members
+    for member in members:
+        if member.top_role == JUMPMASTER_ROLE:
+            await member.remove_roles(JUMPMASTER_ROLE)
+
+
+@client.command()
 @commands.has_permissions(manage_messages=True)
 async def clear(ctx, amount=10):
     """Used to clear bulk messages, Default is 10"""
@@ -180,6 +527,7 @@ async def clear(ctx, amount=10):
 
 
 @client.command()
+@commands.has_permissions(administrator=True)
 async def ping(ctx):
     """Measure the Response Time"""
     ping = ctx.message
@@ -191,9 +539,34 @@ async def ping(ctx):
     )
 
 
+def check_if_member_is_creating_or_updating(username):
+    if username in db["players"].keys():
+        return True
+    else:
+        # Add the name to the db
+        return False
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def remove_team(ctx, teamname):
+    """Remove a team from the roster using the exact team name they used to register"""
+    teamname = teamname.replace("_", " ").replace("-", " ")
+    with open("roster.json", "r+", encoding="utf8") as file:
+        try:
+            file_data = json.load(file)
+            file_data.pop(teamname)
+            file.seek(0)
+            file.truncate()
+            json.dump(file_data, file, indent=4)
+            await ctx.send(f"**{teamname}** has been cleared from the roster")
+        except Exception as e:
+            await ctx.send(f"Error in removing your team {e}")
+
+
 @client.command()
 async def register(
-    ctx, teamname, jumpmaster, teammate_1, teammate_2, teammate_3="None"
+    ctx, teamname, jumpmaster, teammate_1="None", teammate_2="None", teammate_3="None"
 ):
     """Command used to register teams"""
     the_role = "🤠 JUMP MASTERS"
@@ -208,33 +581,58 @@ async def register(
                 await ctx.send(embed=embed)
 
     else:
-        if "_" in teamname:
-            teamname = teamname.replace("_", " ")
-
-        elif "-" in teamname:
-            teamname = teamname.replace("-", " ")
-
-        team = {
-            teamname: {
-                "Team Leader": jumpmaster,
-                "Teammate 1": teammate_1,
-                "Teammate 2": teammate_2,
-                "Sub": teammate_3,
+        is_db = check_if_member_is_creating_or_updating(ctx.author.name)
+        if not is_db["players"]:
+            teamname = teamname.replace("_", " ").replace("-", " ")
+            db["players"][ctx.author.name] = teamname
+            team = {
+                teamname: {
+                    "Team Leader": jumpmaster,
+                    "Teammate 1": teammate_1,
+                    "Teammate 2": teammate_2,
+                    "Sub": teammate_3,
+                }
             }
-        }
 
-        team_JSON = json.dumps(team)
+            team_JSON = json.dumps(team)
 
-        with open("roster.json", "r+") as file:
-            try:
-                file_data = json.load(file)
-                team_data = json.loads(team_JSON)
-                file_data.update(team_data)
-                file.seek(0)
-                json.dump(file_data, file, indent=4)
-            except json.decoder.JSONDecodeError:
-                team_data = json.loads(team_JSON)
-                json.dump(team_data, file, indent=4)
+            with open("roster.json", "r+") as file:
+                try:
+                    file_data = json.load(file)
+                    team_data = json.loads(team_JSON)
+                    file_data.update(team_data)
+                    file.seek(0)
+                    json.dump(file_data, file, indent=4)
+                except json.decoder.JSONDecodeError:
+                    team_data = json.loads(team_JSON)
+                    json.dump(team_data, file, indent=4)
+        else:
+            team_to_remove = db["players"].get(ctx.author.name)
+            teamname = teamname.replace("_", " ").replace("-", " ")
+            db["players"][ctx.author.name] = teamname
+            team = {
+                teamname: {
+                    "Team Leader": jumpmaster,
+                    "Teammate 1": teammate_1,
+                    "Teammate 2": teammate_2,
+                    "Sub": teammate_3,
+                }
+            }
+            team_JSON = json.dumps(team)
+            with open("roster.json", "r+") as file:
+                try:
+                    file_data = json.load(file)
+                    team_data = json.loads(team_JSON)
+
+                    if team_to_remove:
+                        del file_data[team_to_remove]
+
+                    file_data.update(team_data)
+                    file.seek(0)
+                    json.dump(file_data, file, indent=4)
+                except json.decoder.JSONDecodeError:
+                    team_data = json.loads(team_JSON)
+                    json.dump(team_data, file, indent=4)
 
         embed = discord.Embed(
             title="TOURNAMENT REGISTRATION",
@@ -250,15 +648,57 @@ async def register(
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
+async def add_team(
+    ctx, teamname, jumpmaster, teammate_1="None", teammate_2="None", teammate_3="None"
+):
+    """Used by admins to manually add a team to the roster"""
+    teamname = teamname.replace("_", " ").replace("-", " ")
+    team = {
+        teamname: {
+            "Team Leader": jumpmaster,
+            "Teammate 1": teammate_1,
+            "Teammate 2": teammate_2,
+            "Sub": teammate_3,
+        }
+    }
+
+    team_JSON = json.dumps(team)
+
+    with open("roster.json", "r+") as file:
+        try:
+            file_data = json.load(file)
+            team_data = json.loads(team_JSON)
+            file_data.update(team_data)
+            file.seek(0)
+            json.dump(file_data, file, indent=4)
+        except json.decoder.JSONDecodeError:
+            team_data = json.loads(team_JSON)
+            json.dump(team_data, file, indent=4)
+
+    embed = discord.Embed(
+        title="TOURNAMENT REGISTRATION",
+        description=f"Team Name - {teamname}",
+        color=discord.Color.red(),
+    )
+    embed.set_thumbnail(url=ctx.author.avatar_url)
+    embed.add_field(name="Team Leader", value=jumpmaster, inline=False)
+    embed.add_field(name="Teammate 1", value=teammate_1, inline=False)
+    embed.add_field(name="Teammate 2", value=teammate_2, inline=False)
+    embed.add_field(name="Sub", value=teammate_3, inline=False)
+    await ctx.send(embed=embed)
+
+
+@client.command()
+@commands.has_any_role(ORGANIZERS, PARTNERS, CASTERS)
 async def teams(ctx):
-    """Command used to display currently registered teams"""
+    """Command used to display currently db teams"""
     with open("roster.json", "r+") as file:
         try:
             roster = json.load(file)
             embed = discord.Embed(
                 title="TOURNAMENT ROSTER",
-                description="These are the Registered Teams",
+                description="These are the db Teams",
                 color=discord.Color.red(),
             )
             count = 1
@@ -280,16 +720,19 @@ async def teams(ctx):
         except json.decoder.JSONDecodeError:
             embed = discord.Embed(
                 title="😭 Error",
-                description="No Teams Have Registered at the moment",
+                description="No Teams Have db at the moment",
                 color=discord.Color.red(),
             )
             await ctx.send(embed=embed)
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
 async def renew(ctx):
     """Command used to renew the team roster"""
+    for key in db["players"].keys():
+        del db["players"][key]
+
     with open("roster.json", "r+") as file:
         file.seek(0)
         file.truncate()
@@ -302,20 +745,20 @@ async def renew(ctx):
 
 
 @client.command()
-@commands.has_any_role("🔱 ORGANIZERS")
+@commands.has_permissions(administrator=True)
 async def generate(ctx):
-    """Used to generate and excel of registered teams"""
+    """Used to generate and excel of db teams"""
     with open("roster.json", "r+") as file:
         try:
-            registered_teams = json.load(file)
+            db_teams = json.load(file)
             team_names = []
             roles = []
             player_names = []
-            for team in registered_teams:
-                for role in registered_teams[team]:
+            for team in db_teams:
+                for role in db_teams[team]:
                     team_names.append(team)
                     roles.append(role)
-                    player = registered_teams[team][role]
+                    player = db_teams[team][role]
                     player_names.append(player)
             roster = pandas.DataFrame.from_dict(
                 {
@@ -339,7 +782,7 @@ async def generate(ctx):
         except json.decoder.JSONDecodeError:
             embed = discord.Embed(
                 title="😭 Error",
-                description="No Teams Have Registered at the moment",
+                description="No Teams Have db at the moment",
                 color=discord.Color.red(),
             )
             await ctx.send(embed=embed)
@@ -556,17 +999,17 @@ async def stats(ctx):
     """
     A useful command that displays bot statistics.
     """
-    starttime = datetime.datetime.now()
+    starttime = datetime.now()
     pythonVersion = platform.python_version()
     dpyVersion = discord.__version__
     serverCount = len(client.guilds)
     memberCount = len(set(client.get_all_members()))
 
-    time = datetime.datetime.now() - starttime
-    days = ((time.seconds / 3600) / 24) % 24
-    hours = time.seconds / 3600
-    minutes = (time.seconds / 60) % 60
-    seconds = time.seconds % 60
+    _time = datetime.now() - starttime
+    days = ((_time.seconds / 3600) / 24) % 24
+    hours = _time.seconds / 3600
+    minutes = (_time.seconds / 60) % 60
+    seconds = _time.seconds % 60
 
     uptime = get_uptime(days, hours, minutes, seconds)
 
