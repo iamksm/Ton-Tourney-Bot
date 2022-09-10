@@ -4,6 +4,7 @@ import os
 import platform
 import random
 from datetime import datetime
+from more_itertools import grouper
 
 import discord
 import pandas
@@ -233,7 +234,7 @@ async def eleaderboard(ctx):
 @client.command()
 @commands.has_permissions(administrator=True)
 async def add_token(ctx, token):
-    """On the start of a new season, ensure you add tokens to be used one by one"""
+    """On the start of a new season, ensure you add tokens one by one to be used"""
     await ctx.send(_add_token(token, db["tokens"]))
 
 
@@ -266,7 +267,7 @@ async def clear_match_ids(ctx):
 @client.command()
 @commands.has_permissions(administrator=True)
 async def match_ids(ctx):
-    """Shows processed matches (For dev puposes)"""
+    """Shows processed matches (For dev purposes)"""
     if db["match_ids"].value:
         await ctx.send(db["match_ids"].value)
     else:
@@ -320,24 +321,37 @@ async def standings(ctx):
     """Shows current leaderboard standings"""
     today = local_datetime(datetime.today())
     today = today.strftime("%d/%m/%Y, %H:%M:%S")
-    embed = discord.Embed(
-        title="**THE SKULLS PIT LEAGUE**",
-        description=f"Kills leaderboard as at {today}",
-        color=discord.Color.red(),
-    )
-    embed.set_thumbnail(url=str(ctx.guild.icon_url))
+
     with open("leaderboard.json", "r+", encoding="utf8") as file:
         try:
             file_data = json.load(file)
             leaders = dict(sorted(file_data.items(), key=lambda x: x[1], reverse=True))
-            for position, player in enumerate(leaders, start=1):
-                embed.add_field(
-                    name=f"{position}. {player}",
-                    value=f"Total Kils - {leaders[player]}",
-                    inline=True,
+            position = 1
+            for results in grouper(leaders, 20):
+                if int(leaders[results[0]]) == 0:
+                    break
+                embed = discord.Embed(
+                    title="**THE SKULLS PIT LEAGUE**",
+                    description=f"Kills leaderboard as at {today}",
+                    color=discord.Color.red(),
                 )
-            file.seek(0)
-            json.dump(file_data, file, indent=4)
+                embed.set_thumbnail(url=str(ctx.guild.icon_url))
+                for player in results:
+                    if not player:
+                        continue
+
+                    if int(leaders[player]) == 0:
+                        break
+
+                    embed.add_field(
+                        name=f"{position}. {player}",
+                        value=f"Total Kils - {leaders[player]}",
+                        inline=True,
+                    )
+                    position += 1
+                file.seek(0)
+                json.dump(file_data, file, indent=4)
+                await ctx.send(embed=embed)
         except Exception as e:
             await ctx.send(f"Error: {e}")
             return
@@ -389,7 +403,7 @@ async def token_kills(ctx, token=None):
 @client.command()
 @commands.has_permissions(administrator=True)
 async def reset_leaderboard(ctx):
-    """Used by admins to manually add a team to the roster"""
+    """Reset the leaderboard, to be used at the end of a league/season"""
     with open("leaderboard.json", "r+", encoding="utf8") as file:
         try:
             file.truncate()
@@ -429,7 +443,7 @@ def update_leaderboard_json(matches):
 @client.command()
 @commands.has_permissions(administrator=True)
 async def update_leaderboard(ctx, token=None):
-    """Used by admins to manually add a team to the roster"""
+    """Get new data from new matches played to update standings"""
     if not token:
         if db["tokens"]:
             matches_across_tokens = []
@@ -747,7 +761,7 @@ async def renew(ctx):
 @client.command()
 @commands.has_permissions(administrator=True)
 async def generate(ctx):
-    """Used to generate and excel of db teams"""
+    """Used to generate an excel of db teams"""
     with open("roster.json", "r+") as file:
         try:
             db_teams = json.load(file)

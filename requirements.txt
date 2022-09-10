@@ -8,3 +8,6 @@ pandas
 requests
 pytz
 flask
+isort
+black
+flake8
