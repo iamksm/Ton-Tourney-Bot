@@ -3,11 +3,14 @@ import os
 
 import requests
 
+from utils import add_token, clear_tokens, show_tokens
+
 
 class Arenas:
 
     def __init__(self, token=None) -> None:
         self.apex_endpoint = f"https://r5-crossplay.r5prod.stryder.respawn.com/privatematch/?token={token}"
+        self.tokens_file = "arenas_tokens.txt"
 
         if not os.path.isfile("results.json"):
             open("results.json", "w").close()
@@ -15,8 +18,8 @@ class Arenas:
         if not os.path.isfile("arenas_roster.json"):
             open("arenas_roster.json", "w").close()
 
-        if not os.path.isfile("arenas_tokens.txt"):
-            open("arenas_tokens.txt", "w").close()
+        if not os.path.isfile(self.tokens_file):
+            open(self.tokens_file, "w").close()
 
         if not os.path.isfile("arenas_leaderboard.json"):
             open("arenas_leaderboard.json", "w").close()
@@ -33,9 +36,8 @@ class Arenas:
             except json.decoder.JSONDecodeError:
                 self.teams = {}
 
-        with open("arenas_tokens.txt", "r+") as file:
-            self.tokens = file.readlines()
-            self.tokens = set(self.tokens)
+        with open(self.tokens_file, "r+") as file:
+            self.tokens = set(file.readlines())
             file.seek(0)
             file.truncate()
             file.writelines(self.tokens)
@@ -89,15 +91,16 @@ class Arenas:
                 json.dump(leaders, file, indent=4)
 
     def list_tokens(self):
-        return " ".join(self.tokens)
+        with open(self.tokens_file, "r") as file:
+            arenas_tokens = set(file.readlines())
+
+        return show_tokens(arenas_tokens)
 
     def add_token(self, token):
-        self.tokens.add(token + "\n")
+        with open(self.tokens_file) as f:
+            self.tokens = set(f.readlines())
 
-        with open("arenas_tokens.txt", "r+") as file:
-            file.writelines(self.tokens)
-
-        return f"Added {token}"
+        return add_token(token, self.tokens, self.tokens_file)
 
     def register_team(self, leader, team_name):
         if team_name in self.teams.values() and leader not in self.teams.keys():
@@ -159,3 +162,6 @@ class Arenas:
             file.truncate()
             json.dump(results, file, indent=4)
             return True
+
+    def clear_tokens(self):
+        return clear_tokens(self.tokens_file.format("Arenas"))

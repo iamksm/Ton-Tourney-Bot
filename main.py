@@ -4,6 +4,9 @@ import os
 import platform
 import random
 from datetime import datetime
+from arenas import Arenas
+from battle_royale import BattleRoyale
+from kills_race import KillsRace
 from more_itertools import grouper
 
 import discord
@@ -31,12 +34,6 @@ PARTNERS = 855159806808555590
 CASTERS = 820221405261594625
 JUMPMASTER_ROLE_ID = 819527931327807489
 leaderboard = {}
-
-
-def local_datetime(datetime_obj):
-    utcdatetime = datetime_obj.replace(tzinfo=pytz.utc)
-    tz = "Africa/Nairobi"
-    return utcdatetime.astimezone(pytz.timezone(tz))
 
 
 __games__ = [
@@ -82,77 +79,6 @@ async def on_ready():
         await asyncio.sleep(__gamesTimer__)
 
 
-def populate_kills_leaderboard(match):
-    player_results = match["player_results"]
-
-    for player in player_results:
-        player_name = player["playerName"]
-        try:
-            leaderboard[player_name] += player["kills"]
-        except KeyError:
-            leaderboard[player_name] = player["kills"]
-
-    return leaderboard
-
-
-def prepare_player_match_kill_details(match):
-    player_results = match["player_results"]
-    time_started = datetime.fromtimestamp(match["match_start"])
-    time_started = local_datetime(time_started)
-    positions = []
-    player_names = []
-    player_kills = []
-    player_assists = []
-    player_damage = []
-    for player in player_results:
-        positions.append(player["teamPlacement"])
-        player_names.append(player["playerName"])
-        player_kills.append(player["kills"])
-        player_assists.append(player["assists"])
-        player_damage.append(player["damageDealt"])
-
-    df = pandas.DataFrame.from_dict(
-        {
-            "Team Position": positions,
-            "Player Name": player_names,
-            "Player Kills": player_kills,
-            "Player Assists": player_assists,
-            "Player Damage": player_damage,
-        }
-    )
-    return df, time_started
-
-
-def prepare_match_details(match):
-    player_results = match["player_results"]
-    time_started = datetime.fromtimestamp(match["match_start"])
-    time_started = local_datetime(time_started)
-    positions = []
-    team_names = []
-    player_names = []
-    player_kills = []
-    player_assists = []
-    player_damage = []
-    for player in player_results:
-        positions.append(player["teamPlacement"])
-        team_names.append(player["teamName"])
-        player_names.append(player["playerName"])
-        player_kills.append(player["kills"])
-        player_assists.append(player["assists"])
-        player_damage.append(player["damageDealt"])
-    df = pandas.DataFrame.from_dict(
-        {
-            "Team Position": positions,
-            "Team Name": team_names,
-            "Player Name": player_names,
-            "Player Kills": player_kills,
-            "Player Assists": player_assists,
-            "Player Damage": player_damage,
-        }
-    )
-    return df, time_started
-
-
 @client.event
 async def on_message(message):
     """Automatically deletes discord link messages"""
@@ -167,90 +93,94 @@ async def on_message(message):
 @commands.has_permissions(administrator=True)
 async def results(ctx, token, match_no=None):
     """Command to generate results pulled from Apex API"""
-    # only admins can run this
-    if not token:
-        return
-    response = requests.get(APEX_ENDPOINT.format(token))
-    if response.status_code != requests.codes.ok:
-        return
-    matches = response.json().get("matches")
-    if not matches:
-        return
-    matches.reverse()
-    match_count = 0
-    for match in matches:
-        match_data, time_started = prepare_match_details(match)
-        file_name = f"/tmp/Match-{match_count +  1}-{time_started.date()}.xlsx"
-        match_data.sort_values("Team Position", ascending=True, inplace=True)
-        match_data.to_excel(file_name, index=False)
-        if not match_no:
-            await ctx.send(file=discord.File(file_name))
-            os.remove(file_name)
-            match_count += 1
-            continue
-
-        if match_no and int(match_no) - 1 == match_count:
-            await ctx.send(file=discord.File(file_name))
-            os.remove(file_name)
-            break
-        match_count += 1
+    BR = BattleRoyale()
+    for file in BR.results(token, match_no):
+        await ctx.send(file=discord.File(file))
 
 
 @client.command()
 @commands.has_permissions(manage_messages=True)
 async def eleaderboard(ctx):
-    """To be used by casters to generate excel"""
-    with open("leaderboard.json", "r", encoding="utf-8") as file:
-        try:
-            data = json.load(file)
-            data = dict(sorted(data.items(), key=lambda x: x[1], reverse=True))
-            df = pandas.DataFrame.from_dict(
-                {"Names": data.keys(), "Kills": data.values()}
-            )
-        except Exception as e:
-            await ctx.send(f"Error: {e}")
-            return
+    KR = KillsRace()
+    is_processed, result = KR.eleaderboard()
+    if not is_processed:
+        await ctx.send(f"Error: {result}")
+        return
 
-    today = local_datetime(datetime.today())
-    today = today.strftime("%d-%m-%Y %H:%M:%S")
-    file_name = f"/tmp/leaderboard-{today}.xlsx"
-    writer = pandas.ExcelWriter(file_name)
-
-    df.sort_values("Kills", ascending=False, inplace=True)
-    print(df)
-    df.to_excel(writer, index=False, sheet_name="Sheet1")
-
-    # Auto resize columns
-    for column in df:
-        column_length = max(df[column].astype(str).map(len).max(), len(column))
-        col_idx = df.columns.get_loc(column)
-        writer.sheets["Sheet1"].set_column(col_idx, col_idx, column_length)
-    writer.save()
-
-    await ctx.send(file=discord.File(file_name))
-    os.remove(file_name)
+    await ctx.send(file=discord.File(result))
+    os.remove(result)
 
 
 @client.command()
 @commands.has_permissions(administrator=True)
-async def add_token(ctx, token):
+async def add_br_token(ctx, token):
     """On the start of a new season, ensure you add tokens one by one to be used"""
-    await ctx.send(_add_token(token, db["tokens"]))
+    BR = BattleRoyale()
+    await ctx.send(BR.add_token(token))
 
 
 @client.command()
 @commands.has_permissions(administrator=True)
-async def clear_tokens(ctx):
+async def add_ar_token(ctx, token):
+    """On the start of a new season, ensure you add tokens one by one to be used"""
+    AR = Arenas()
+    await ctx.send(AR.add_token(token))
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def add_kr_token(ctx, token):
+    """On the start of a new season, ensure you add tokens one by one to be used"""
+    KR = KillsRace()
+    await ctx.send(KR.add_token(token))
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def clear_br_token(ctx, token):
     """Clears all stored tokens"""
-    db["tokens"] = {}
-    await ctx.send("Tokens successfully cleared")
+    BR = BattleRoyale()
+    await ctx.send(BR.clear_tokens())
 
 
 @client.command()
 @commands.has_permissions(administrator=True)
-async def list_tokens(ctx):
-    """Shows all registered tokens"""
-    await ctx.send(_show_tokens(db["tokens"]))
+async def clear_ar_token(ctx, token):
+    """Clears all stored tokens"""
+    AR = Arenas()
+    await ctx.send(AR.clear_tokens())
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def clear_kr_token(ctx, token):
+    """Clears all stored tokens"""
+    KR = KillsRace()
+    await ctx.send(KR.clear_tokens())
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def list_br_tokens(ctx):
+    """Shows all stored tokens"""
+    BR = BattleRoyale()
+    await ctx.send(BR.list_tokens())
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def list_ar_tokens(ctx):
+    """Shows all stored tokens"""
+    AR = Arenas()
+    await ctx.send(AR.list_tokens())
+
+
+@client.command()
+@commands.has_permissions(administrator=True)
+async def list_kr_tokens(ctx):
+    """Shows all stored tokens"""
+    KR = KillsRace()
+    await ctx.send(KR.list_tokens())
 
 
 @client.command()
